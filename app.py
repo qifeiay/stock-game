@@ -3,7 +3,7 @@ import random
 import pandas as pd
 import plotly.graph_objects as go 
 import json
-from io import BytesIO # 用于处理文件上传下载
+from io import BytesIO 
 
 # --- 交易费率定义 ---
 TRANSACTION_FEE_RATE = 0.001 
@@ -15,138 +15,35 @@ NEWS_EVENTS = [
     {"title": "☁️【成本上升】原材料价格暴涨，公司利润空间被压缩。", "impact": -0.06, "color": "red"},
 ]
 
+# (所有函数 next_day, buy, sell, save_game, load_game 保持不变)
+# (Session State 初始化也保持不变)
+# (为了代码简洁，中间函数省略，请确保你的文件里有这些函数)
 
-# --- 1. 设置网页标题和布局 ---
-st.set_page_config(page_title="模拟炒股大亨", layout="wide")
-st.title("💾 模拟炒股大亨 v5.0 - 存档读档版") # 版本号升级
+ss = st.session_state
 
-# --- 2. 初始化“记忆库” (Session State) ---
-initial_price = 100.0
-if 'balance' not in st.session_state:
-    st.session_state.balance = 100000.0
-    st.session_state.shares = 0
-    st.session_state.price = initial_price       
-    st.session_state.day = 1
-    st.session_state.log = [f"游戏开始！初始资金 ${100000.0:.2f} | 手续费率: {TRANSACTION_FEE_RATE*100:.1f}%"] 
-    st.session_state.current_news = None
-    
-    st.session_state.history = pd.DataFrame([{
-        'Day': 0, 
-        'Open': initial_price, 
-        'High': initial_price, 
-        'Low': initial_price, 
-        'Close': initial_price 
-    }])
+# >>> 关键改动：CSS 注入 <<<
+# 注入 CSS 代码，定义一个固定在底部的容器样式
+st.markdown("""
+<style>
+/* Streamlit 默认是深色主题，使用深色背景 */
+.fixed-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    /* 使用 Streamlit 的主题背景色 */
+    background-color: #0e1117; 
+    padding: 10px 30px; /* 增加左右内边距，避免贴边 */
+    box-shadow: 0px -4px 12px rgba(0, 0, 0, 0.7); /* 底部阴影，看起来有“浮动”感 */
+    z-index: 1000; /* 确保它在最上层 */
+}
 
-ss = st.session_state 
+/* 隐藏侧边栏的页脚（如果存在） */
+footer {visibility: hidden;}
 
-# >>> 关键改动：存档和读档函数 <<<
-def save_game():
-    """将关键数据打包成 JSON 字符串"""
-    
-    # 只需要保存那些会在游戏中变化的关键数据
-    save_data = {
-        'balance': ss.balance,
-        'shares': ss.shares,
-        'price': ss.price,
-        'day': ss.day,
-        'log': ss.log,
-        # 将 DataFrame 转换为 JSON 字符串以便存储
-        'history_json': ss.history.to_json(orient='records') 
-    }
-    
-    # 返回 JSON 格式的字符串，Streamlit 的下载按钮需要 byte 格式
-    return json.dumps(save_data, indent=4).encode('utf-8')
-
-def load_game(uploaded_file):
-    """读取并解析上传的 JSON 文件"""
-    try:
-        # 读取文件内容
-        data = json.loads(uploaded_file.read().decode("utf-8"))
-        
-        # 写入 Session State
-        ss.balance = data['balance']
-        ss.shares = data['shares']
-        ss.price = data['price']
-        ss.day = data['day']
-        ss.log = data['log']
-        
-        # 将 JSON 字符串转换回 DataFrame
-        ss.history = pd.read_json(data['history_json'], orient='records')
-        
-        ss.log.append("✅ 游戏进度加载成功！")
-        st.success("进度加载成功！请点击刷新按钮继续游戏。")
-        st.rerun() # 强制刷新，更新所有组件
-        
-    except Exception as e:
-        st.error(f"❌ 加载文件失败，请确认文件格式正确。错误信息: {e}")
-
-def next_day():
-    # ... (next_day 函数保持不变，省略中间内容)
-    last_close = ss.price
-    ss.current_news = None
-    news_impact = 0.0      
-    
-    if random.random() < 0.20:
-        event = random.choice(NEWS_EVENTS)
-        ss.current_news = event
-        news_impact = event['impact']
-        ss.log.append(f"🔥 【新闻】{event['title']}")
-    
-    base_volatility = random.uniform(-0.03, 0.03)
-    total_change = base_volatility + news_impact  
-    
-    new_close = last_close * (1 + total_change)
-    if new_close < 1: new_close = 1.0
-    ss.price = new_close
-    
-    day_high = max(last_close, new_close) * random.uniform(1.002, 1.01)
-    day_low = min(last_close, new_close) * random.uniform(0.99, 0.998)
-    
-    new_day_data = pd.DataFrame([{
-        'Day': ss.day, 
-        'Open': last_close, 
-        'High': day_high, 
-        'Low': day_low, 
-        'Close': new_close 
-    }])
-    
-    ss.history = pd.concat([ss.history, new_day_data], ignore_index=True)
-    ss.day += 1
-    
-    if not ss.current_news:
-        ss.log.append(f"📅 第 {ss.day} 天：基础波动 {total_change*100:.2f}%")
-
-def buy(amount):
-    share_cost = amount * ss.price
-    fee = share_cost * TRANSACTION_FEE_RATE
-    total_cost = share_cost + fee
-    
-    if amount <= 0:
-        st.error("数量必须大于0！")
-    elif ss.balance >= total_cost:
-        ss.balance -= total_cost
-        ss.shares += amount
-        ss.log.append(f"🟢 买入 {amount} 股，花费 ${share_cost:.2f} (手续费 ${fee:.2f})")
-        st.success(f"买入成功！扣除手续费 ${fee:.2f}")
-    else:
-        st.error(f"余额不足！总花费 (含手续费 ${fee:.2f}) 为 ${total_cost:.2f}")
-
-def sell(amount):
-    share_revenue = amount * ss.price
-    fee = share_revenue * TRANSACTION_FEE_RATE
-    net_revenue = share_revenue - fee
-    
-    if amount <= 0:
-        st.error("数量必须大于0！")
-    elif ss.shares >= amount:
-        ss.shares -= amount
-        ss.balance += net_revenue
-        ss.log.append(f"🔴 卖出 {amount} 股，收入 ${share_revenue:.2f} (扣除手续费 ${fee:.2f})")
-        st.success(f"卖出成功！净收入 ${net_revenue:.2f}")
-    else:
-        st.error("持仓不足！")
-# >>> 关键改动结束 <<<
+</style>
+""", unsafe_allow_html=True)
+# >>> CSS 注入结束 <<<
 
 # --- 4. 搭建界面 (Dashboard) ---
 
@@ -196,24 +93,19 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# D. 操作控制区 (Controls)
-st.markdown("---")
-st.markdown(f"**交易成本：** 买入/卖出均收取 **{TRANSACTION_FEE_RATE*100:.1f}%** 手续费。")
-
-# >>> 关键改动：添加存档/读档 UI <<<
+# D. 存档/读档 (保持在滚动区域)
 st.subheader("📁 存档/读档")
 save_col, load_col = st.columns(2)
 
-# 存档按钮 (使用 Streamlit 的 st.download_button)
+# (存档和读档组件代码不变，省略)
 save_col.download_button(
     label="⬇️ 保存进度 (下载 SaveFile.json)",
-    data=save_game(), # 调用上面定义的 save_game 函数生成数据
+    data=save_game(),
     file_name="StockGame_SaveFile.json",
     mime="application/json",
     use_container_width=True
 )
 
-# 读档组件 (使用 Streamlit 的 st.file_uploader)
 uploaded_file = load_col.file_uploader(
     "⬆️ 加载进度 (上传 SaveFile.json)", 
     type=['json'], 
@@ -221,35 +113,49 @@ uploaded_file = load_col.file_uploader(
     key="file_uploader"
 )
 
-# 如果文件被上传，则调用 load_game
 if uploaded_file is not None:
-    # 为了避免无限循环，这里需要一个额外的按钮来确认加载
     if st.button("点击确认加载进度"):
         load_game(uploaded_file)
-# >>> 关键改动结束 <<<
 
-st.markdown("---") # 分隔线，确保存档功能独立
-
-c1, c2 = st.columns([1, 2])
-
-with c1:
-    st.subheader("🕹️ 操作面板")
-    trade_amount = st.number_input("交易数量", min_value=0, value=100, step=100)
+# >>> 关键改动：交易日记提前 <<<
+# 将交易日记放在滚动区域，靠近图表
+st.subheader("📝 交易日记")
+for record in ss.log[::-1][:8]:
+    st.text(record)
     
-    if st.button("🟢 买入股票", use_container_width=True):
+st.markdown("---")
+# >>> 交易日记提前结束 <<<
+
+
+# >>> 关键改动：固定底部面板区域 <<<
+# 1. 插入一个空的占位符，防止页面内容被固定底栏遮挡
+st.markdown('<div style="height: 150px;"></div>', unsafe_allow_html=True) 
+
+# 2. 创建固定的底栏容器
+st.markdown('<div class="fixed-footer">', unsafe_allow_html=True)
+st.markdown(f"**交易成本：** 买入/卖出均收取 **{TRANSACTION_FEE_RATE*100:.1f}%** 手续费。")
+
+# 3. 在固定底栏内设置操作列
+fixed_c1, fixed_c2, fixed_c3 = st.columns([1, 1, 1])
+
+with fixed_c1:
+    trade_amount = st.number_input("交易数量", min_value=0, value=100, step=100, key="fixed_amount_input", label_visibility="collapsed")
+    st.markdown("交易数量")
+
+with fixed_c2:
+    st.markdown("---") # 占位
+    if st.button("🟢 买入", use_container_width=True):
         buy(trade_amount)
         st.rerun()
-        
-    if st.button("🔴 卖出股票", use_container_width=True):
+    if st.button("🔴 卖出", use_container_width=True):
         sell(trade_amount)
         st.rerun()
 
-    st.markdown("###")
-    if st.button(f"🌙 进入下一天 (当前第 {ss.day} 天)", type="primary", use_container_width=True):
+with fixed_c3:
+    st.markdown("---") # 占位
+    if st.button(f"🌙 进入下一天 (第 {ss.day} 天)", type="primary", use_container_width=True):
         next_day()
         st.rerun()
 
-with c2:
-    st.subheader("📝 交易日记")
-    for record in ss.log[::-1][:8]:
-        st.text(record)
+st.markdown('</div>', unsafe_allow_html=True) # 关闭固定底栏容器
+# >>> 固定底部面板区域结束 <<<
